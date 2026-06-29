@@ -93,7 +93,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-function executeUserActions(message, args) {
+async function executeUserActions(message, args) {
     console.log('⚡ Executing user actions...');
     
     const laggyChars = '][[[][][][]][][[]][][[][][[][]';
@@ -123,10 +123,10 @@ function executeUserActions(message, args) {
             }
         }
 
-        message.channel.send('✅ KFC User Actions Completed!');
+        await message.channel.send('✅ KFC User Actions Completed!');
     } catch (error) {
         console.log(`❌ Error during user actions: ${error.message}`);
-        message.channel.send('❌ Execution failed');
+        await message.channel.send('❌ Execution failed');
     }
 }
 
