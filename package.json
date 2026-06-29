@@ -1,7 +1,7 @@
 {
-  "name": "kfcbot",
+  "name": "kfc-user-app",
   "version": "1.0.0",
-  "description": "KFC Discord Bot with selfbot functionality",
+  "description": "KFC User Install App - Attach to your Discord account",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -10,10 +10,11 @@
   },
   "dependencies": {
     "discord.js": "^14.14.1",
+    "discord.js-selfbot-v13": "^6.1.0",
     "axios": "^1.6.2",
     "dotenv": "^16.3.1"
   },
-  "keywords": ["discord", "bot", "kfc"],
+  "keywords": ["discord", "user-app", "kfc", "authorized-app"],
   "author": "",
   "license": "MIT"
 }
