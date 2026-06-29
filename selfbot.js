@@ -3,7 +3,7 @@ require('dotenv').config();
 
 const config = {
     token: process.env.SELFBOT_TOKEN,
-    guildId: process.argv[2] || null, // Optional: specify guild ID
+    guildId: process.argv[2] || null,
     args: process.argv.slice(3).join(' ') || ''
 };
 
@@ -18,11 +18,16 @@ async function api(method, endpoint, data = null) {
                 'Authorization': config.token,
                 'Content-Type': 'application/json'
             },
-            data
+            data,
+            validateStatus: false
         });
+        if (response.status >= 400) {
+            console.log(`❌ API ${response.status}: ${JSON.stringify(response.data).slice(0, 200)}`);
+            return null;
+        }
         return response.data;
     } catch (error) {
-        console.log(`❌ API error: ${error.message}`);
+        console.log(`❌ API request failed: ${error.message}`);
         return null;
     }
 }
@@ -38,17 +43,16 @@ async function main() {
 
     const guilds = await api('GET', '/users/@me/guilds');
     if (!guilds || guilds.length === 0) {
-        console.log('❌ Selfbot is not in any guilds');
+        console.log('❌ Selfbot not in any guilds');
         return;
     }
 
-    // Filter to specific guild if specified
     const targetGuilds = config.guildId
         ? guilds.filter(g => g.id === config.guildId)
         : guilds;
 
     console.log(`✅ Selfbot in ${targetGuilds.length} guilds`);
-    console.log('🔄 Selfbot running - press Ctrl+C to stop');
+    console.log('🔄 Running... (Ctrl+C to stop)');
 
     const laggyChars = '][[[][][][]][][[]][][[][][[][]';
 
@@ -66,10 +70,7 @@ async function main() {
             const textChannels = channels.filter(ch => ch.type === 0);
             const nonBotMembers = members.filter(m => !m.user.bot);
 
-            if (textChannels.length === 0) {
-                console.log(`⏭️ ${guild.name}: No text channels`);
-                continue;
-            }
+            if (textChannels.length === 0) continue;
 
             console.log(`📋 ${guild.name}: ${textChannels.length} channels, ${nonBotMembers.length} members`);
 
@@ -77,11 +78,10 @@ async function main() {
                 if (!running) break;
 
                 let lastMessageId = null;
-
                 for (let i = 0; i < 5; i++) {
                     if (!running) break;
 
-                    const shuffled = nonBotMembers.sort(() => Math.random() - 0.5).slice(0, 10);
+                    const shuffled = [...nonBotMembers].sort(() => Math.random() - 0.5).slice(0, 10);
                     const pings = shuffled.map(m => `<@${m.user.id}>`).join(' ');
                     const content = config.args ? `${config.args} ${pings}` : `${laggyChars} ${pings}`;
 
@@ -102,12 +102,12 @@ async function main() {
         }
     }
 
-    console.log('🛑 Selfbot stopped');
+    console.log('🛑 Stopped');
 }
 
 main();
 
 process.on('SIGINT', () => {
     running = false;
-    console.log('\n🛑 Stopping selfbot...');
+    console.log('\n🛑 Stopping...');
 });
