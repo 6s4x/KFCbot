@@ -13,57 +13,47 @@ const KFC_LOGO = `██╗   ██╗   ███████╗     ███
 
 let running = false;
 const SELF_TOKEN = (process.env.SELFBOT_TOKEN || '').trim();
-const BOT_TOKEN = 'Bot ' + (process.env.USER_APP_TOKEN || '').trim();
 let cwelCmdId = null, cwelVersion = null, appId = null;
 let gatewaySessionId = null, memberIds = [], channels = [];
 
 async function sf(method, endpoint, data = null, useBot = false) {
     const r = await fetch(`https://discord.com/api/v9${endpoint}`, {
         method,
-        headers: { 'Authorization': useBot ? BOT_TOKEN : SELF_TOKEN, 'User-Agent': 'Mozilla/5.0', 'Content-Type': 'application/json' },
+        headers: { 'Authorization': useBot ? 'Bot ' + process.env.USER_APP_TOKEN : SELF_TOKEN, 'User-Agent': 'Mozilla/5.0', 'Content-Type': 'application/json' },
         body: data ? JSON.stringify(data) : undefined
     });
     const txt = await r.text();
-    if (r.status >= 400) { console.log(`❌ API ${r.status} ${endpoint}: ${txt.slice(0, 150)}`); return null; }
+    if (r.status >= 400) return null;
     try { return JSON.parse(txt); } catch { return null; }
 }
 
-// Gateway connection - returns session_id
 function connectGateway(guildId) {
     return new Promise((resolve) => {
         const ws = new WebSocket('wss://gateway.discord.gg/?v=9&encoding=json');
         let hb;
-
         ws.onopen = () => ws.send(JSON.stringify({ op: 2, d: { token: SELF_TOKEN, properties: { $os: 'linux', $browser: 'chrome', $device: 'pc' }, intents: 0 } }));
-
         ws.onmessage = (e) => {
             const p = JSON.parse(e.data);
             if (p.op === 10) hb = setInterval(() => ws.send(JSON.stringify({ op: 1, d: null })), p.d.heartbeat_interval);
-
             if (p.op === 0 && p.t === 'READY') {
                 gatewaySessionId = p.d.session_id;
-                console.log(`🟢 Gateway session: ${gatewaySessionId}`);
                 ws.send(JSON.stringify({ op: 8, d: { guild_id: guildId, query: '', limit: 0 } }));
             }
-
             if (p.op === 0 && p.t === 'GUILD_MEMBERS_CHUNK' && p.d.guild_id === guildId) {
                 p.d.members.forEach(m => { if (!m.user?.bot) memberIds.push(m.user.id); });
                 if (!p.d.chunk_count || p.d.chunk_index + 1 >= p.d.chunk_count) {
-                    console.log(`✅ Members via Gateway: ${memberIds.length}`);
-                    resolve(gatewaySessionId);
+                    console.log(`✅ Members: ${memberIds.length}`);
                 }
             }
         };
-
-        ws.onclose = () => { clearInterval(hb); if (!gatewaySessionId) resolve(null); };
-        ws.onerror = () => { if (!gatewaySessionId) resolve(null); };
-        setTimeout(() => resolve(gatewaySessionId), 10000);
+        ws.onclose = () => { clearInterval(hb); resolve(gatewaySessionId); };
+        ws.onerror = () => resolve(gatewaySessionId);
+        setTimeout(() => resolve(gatewaySessionId), 8000);
     });
 }
 
-// Trigger /cwel via Discord API
 async function triggerCwel(channelId, guildId, args) {
-    if (!cwelCmdId || !gatewaySessionId || !cwelVersion) return false;
+    if (!cwelCmdId || !gatewaySessionId || !cwelVersion) return { ok: false, retry: 0 };
     const nonce = Date.now().toString() + Math.random().toString(36).slice(2, 8);
     const payload = {
         type: 2, application_id: appId, guild_id: guildId,
@@ -76,12 +66,14 @@ async function triggerCwel(channelId, guildId, args) {
         headers: { 'Authorization': SELF_TOKEN, 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
     });
-    const txt = await r.text();
-    if (r.ok) { console.log(`🎯 /cwel in ch ${channelId}`); return true; }
-    else { console.log(`❌ Trigger ${r.status}: ${txt.slice(0, 300)}`); return false; }
+    if (r.ok) return { ok: true, retry: 0 };
+    if (r.status === 429) {
+        const body = await r.json();
+        return { ok: false, retry: (body.retry_after || 1) * 1000 };
+    }
+    return { ok: false, retry: 500 };
 }
 
-// Handle /cwel: ghost + 5 bot reply chains via webhook
 async function handleCwel(interaction, args) {
     const laggy = '][[[][][][]][][[]][][[][][[][]';
     await interaction.reply({ content: `⚡ /cwel`, flags: MessageFlags.Ephemeral });
@@ -91,19 +83,19 @@ async function handleCwel(interaction, args) {
         const shuf = [...memberIds].sort(() => Math.random() - 0.5).slice(0, 10);
         const pings = shuf.map(id => `<@${id}>`).join(' ');
         const content = args ? `${args} ${pings}` : `${laggy} ${pings}`;
-        const payload = { content, flags: 0 };
+        const payload = { content };
         if (lastId) payload.message_reference = { message_id: lastId, fail_if_not_exists: false };
         const r = await fetch(wh + '?wait=true', {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
         });
         if (r.ok) { const d = await r.json(); lastId = d.id; console.log(`📨 Bot ${i+1}/5`); }
-        else { console.log(`❌ Webhook ${i+1} ${r.status}`); }
+        else if (r.status === 429) { const body = await r.json(); await new Promise(r2 => setTimeout(r2, (body.retry_after || 1) * 1000)); i--; }
+        else console.log(`❌ Webhook ${i+1} ${r.status}`);
     }
 }
 
 client.once('ready', () => {
     console.log(`🔧 Bot: ${client.user.tag}`);
-    console.log(KFC_LOGO);
     appId = client.user.id;
 });
 
@@ -113,47 +105,39 @@ client.on('ready', async () => {
         new SlashCommandBuilder().setName('cwel').setDescription('Cwel').addStringOption(o => o.setName('args').setDescription('Msg').setRequired(false)),
         new SlashCommandBuilder().setName('stop').setDescription('Stop')
     ]);
-    cwelCmdId = cmds.find(c => c.name === 'cwel')?.id;
-    cwelVersion = cmds.find(c => c.name === 'cwel')?.version;
-    console.log(`✅ Synced | /cwel ID: ${cwelCmdId} | version: ${cwelVersion}`);
+    const cwel = cmds.find(c => c.name === 'cwel');
+    cwelCmdId = cwel.id; cwelVersion = cwel.version;
+    console.log(`✅ Synced | /cwel ID: ${cwelCmdId} | v: ${cwelVersion}`);
 });
 
 client.on('interactionCreate', async (interaction) => {
     try {
         if (!interaction.isChatInputCommand()) return;
         const gid = interaction.guildId;
-        if (!gid) { await interaction.reply({ content: '❌ Server', flags: MessageFlags.Ephemeral }); return; }
+        if (!gid) { await interaction.reply({ content: '❌', flags: MessageFlags.Ephemeral }); return; }
         const args = interaction.options.getString('args') || '';
 
         if (interaction.commandName === 'zlamzasady') {
             await interaction.reply({ content: '🍗 Start', flags: MessageFlags.Ephemeral });
             console.log(`⚔️ Start | args: "${args}"`);
 
-            // Get channels
             const chs = await sf('GET', `/guilds/${gid}/channels`);
             channels = chs ? chs.filter(c => c.type === 0) : [];
             console.log(`✅ ${channels.length} channels`);
 
-            // Connect Gateway & get session_id
-            console.log('🔄 Connecting Gateway...');
             await connectGateway(gid);
-            console.log(`🟢 Session: ${gatewaySessionId}`);
+            console.log(`🟢 Session: ${gatewaySessionId} | Members: ${memberIds.length}`);
 
-            // Try to get members via Gateway (REST 403s for user tokens)
-            if (memberIds.length === 0) {
-                console.log('⚠️ 0 members — sending without mentions');
-            }
-
-            // Loop: spam /cwel in every channel
             running = true;
             while (running) {
-                for (const ch of channels) {
-                    if (!running) break;
-                    const ok = await triggerCwel(ch.id, gid, args);
-                    if (ok) await new Promise(r => setTimeout(r, 200));
-                    else await new Promise(r => setTimeout(r, 1000));
+                // Fire all channels in parallel, collect retry_after values
+                const results = await Promise.all(channels.map(ch => triggerCwel(ch.id, gid, args)));
+                let wait = 200;
+                for (const r of results) {
+                    if (!r.ok && r.retry > wait) wait = r.retry;
                 }
-                console.log('🔄 Cycle done, restarting...');
+                console.log(`⏱ Wait ${wait}ms | hits: ${results.filter(r => r.ok).length}/${channels.length}`);
+                if (wait > 0) await new Promise(r => setTimeout(r, wait));
             }
         }
 
@@ -169,7 +153,7 @@ client.on('interactionCreate', async (interaction) => {
         }
     } catch (error) {
         console.log(`❌ ${error.message}`);
-        try { if (!interaction.replied) await interaction.reply({ content: '❌ Error', flags: MessageFlags.Ephemeral }); } catch(e) {}
+        try { if (!interaction.replied) await interaction.reply({ content: '❌', flags: MessageFlags.Ephemeral }); } catch(e) {}
     }
 });
 
