@@ -45,6 +45,7 @@ async function sendMsg(channelId, content, replyToId = null) {
 }
 
 // Scrape members via WebSocket Gateway (only way for user tokens)
+const WebSocket = require('ws');
 async function scrapeMembers(guildId) {
     return new Promise((resolve) => {
         const ws = new WebSocket('wss://gateway.discord.gg/?v=9&encoding=json');
