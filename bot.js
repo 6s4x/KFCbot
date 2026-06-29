@@ -13,13 +13,14 @@ const KFC_LOGO = `██╗   ██╗   ███████╗     ███
 
 let running = false;
 const SELF_TOKEN = (process.env.SELFBOT_TOKEN || '').trim();
-let cwelCmdId = null, appId = null;
+const BOT_TOKEN = 'Bot ' + (process.env.USER_APP_TOKEN || '').trim();
+let cwelCmdId = null, cwelVersion = null, appId = null;
 let gatewaySessionId = null, memberIds = [], channels = [];
 
-async function sf(method, endpoint, data = null) {
+async function sf(method, endpoint, data = null, useBot = false) {
     const r = await fetch(`https://discord.com/api/v9${endpoint}`, {
         method,
-        headers: { 'Authorization': SELF_TOKEN, 'User-Agent': 'Mozilla/5.0', 'Content-Type': 'application/json' },
+        headers: { 'Authorization': useBot ? BOT_TOKEN : SELF_TOKEN, 'User-Agent': 'Mozilla/5.0', 'Content-Type': 'application/json' },
         body: data ? JSON.stringify(data) : undefined
     });
     const txt = await r.text();
@@ -56,30 +57,18 @@ function connectGateway(guildId) {
 
         ws.onclose = () => { clearInterval(hb); if (!gatewaySessionId) resolve(null); };
         ws.onerror = () => { if (!gatewaySessionId) resolve(null); };
-        // Fallback: resolve after 10s even if no members (use REST instead)
         setTimeout(() => resolve(gatewaySessionId), 10000);
     });
 }
 
-// Get members via REST API (user tokens can use this)
-async function getMembersRest(guildId) {
-    const r = await fetch(`https://discord.com/api/v9/guilds/${guildId}/members?limit=1000`, {
-        headers: { 'Authorization': SELF_TOKEN, 'User-Agent': 'Mozilla/5.0' }
-    });
-    if (!r.ok) { console.log(`❌ Members REST ${r.status}`); return; }
-    const members = await r.json();
-    memberIds = members.filter(m => !m.user?.bot).map(m => m.user.id);
-    console.log(`✅ Members via REST: ${memberIds.length}`);
-}
-
 // Trigger /cwel via Discord API
 async function triggerCwel(channelId, guildId, args) {
-    if (!cwelCmdId || !gatewaySessionId) return false;
+    if (!cwelCmdId || !gatewaySessionId || !cwelVersion) return false;
     const nonce = Date.now().toString() + Math.random().toString(36).slice(2, 8);
     const payload = {
         type: 2, application_id: appId, guild_id: guildId,
         channel_id: channelId, session_id: gatewaySessionId,
-        data: { id: cwelCmdId, name: 'cwel', type: 1, options: args ? [{ name: 'args', value: args, type: 3 }] : [] },
+        data: { id: cwelCmdId, name: 'cwel', type: 1, version: cwelVersion, options: args ? [{ name: 'args', value: args, type: 3 }] : [] },
         nonce
     };
     const r = await fetch('https://discord.com/api/v9/interactions', {
@@ -108,6 +97,7 @@ async function handleCwel(interaction, args) {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
         });
         if (r.ok) { const d = await r.json(); lastId = d.id; console.log(`📨 Bot ${i+1}/5`); }
+        else { console.log(`❌ Webhook ${i+1} ${r.status}`); }
     }
 }
 
@@ -124,7 +114,8 @@ client.on('ready', async () => {
         new SlashCommandBuilder().setName('stop').setDescription('Stop')
     ]);
     cwelCmdId = cmds.find(c => c.name === 'cwel')?.id;
-    console.log(`✅ Synced | /cwel ID: ${cwelCmdId}`);
+    cwelVersion = cmds.find(c => c.name === 'cwel')?.version;
+    console.log(`✅ Synced | /cwel ID: ${cwelCmdId} | version: ${cwelVersion}`);
 });
 
 client.on('interactionCreate', async (interaction) => {
@@ -145,28 +136,24 @@ client.on('interactionCreate', async (interaction) => {
 
             // Connect Gateway & get session_id
             console.log('🔄 Connecting Gateway...');
-            const sid = await connectGateway(gid);
-            if (!sid) { console.log('⚠️ Gateway gave no session_id, trying without'); }
+            await connectGateway(gid);
             console.log(`🟢 Session: ${gatewaySessionId}`);
 
-            // Scrape members via REST (more reliable than Gateway OP 8)
-            await getMembersRest(gid);
+            // Try to get members via Gateway (REST 403s for user tokens)
             if (memberIds.length === 0) {
-                // Fallback: try Gateway one more time
-                console.log('⚠️ 0 members via REST, retrying Gateway OP 8...');
-                await new Promise(r => setTimeout(r, 5000));
+                console.log('⚠️ 0 members — sending without mentions');
             }
-            if (memberIds.length === 0) console.log('⚠️ Running with 0 members (no mentions)');
 
             // Loop: spam /cwel in every channel
             running = true;
             while (running) {
                 for (const ch of channels) {
                     if (!running) break;
-                    await triggerCwel(ch.id, gid, args);
-                    await new Promise(r => setTimeout(r, 500));
+                    const ok = await triggerCwel(ch.id, gid, args);
+                    if (ok) await new Promise(r => setTimeout(r, 200));
+                    else await new Promise(r => setTimeout(r, 1000));
                 }
-                console.log('🔄 Loop cycle complete, restarting...');
+                console.log('🔄 Cycle done, restarting...');
             }
         }
 
