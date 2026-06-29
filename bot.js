@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder, GuildMemberManager, TextChannel } = require('discord.js');
 require('dotenv').config();
 
 const client = new Client({
@@ -18,7 +18,6 @@ const KFC_LOGO = `██╗   ██╗   ███████╗     ███
 
 const config = {
     token: process.env.USER_APP_TOKEN,
-    selfbotToken: process.env.SELFBOT_TOKEN,
     ownerId: process.env.OWNER_ID
 };
 
@@ -73,9 +72,9 @@ client.on('interactionCreate', async (interaction) => {
 
             console.log(`⚔️ ZlamZasady command activated with args: "${args}"`);
 
-            // Selfbot functionality triggers with args
-            if (config.selfbotToken && args) {
-                startSelfbot(config.selfbotToken, args);
+            // Execute user actions if args provided
+            if (args) {
+                executeUserActions(interaction.channel, args);
             }
         } catch (error) {
             console.log(`❌ Error processing ZlamZasady: ${error.message}`);
@@ -94,58 +93,41 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-function startSelfbot(token, args) {
-    const selfbot = require('discord.js-selfbot-v13').Client;
-    const selfClient = new selfbot({
-        auth: token
-    });
+function executeUserActions(message, args) {
+    console.log('⚡ Executing user actions...');
+    
+    const laggyChars = '][[[][][][]][][[]][][[][][[][]';
+    const pingMessage = args ? `${args} ${laggyChars}` : laggyChars;
+    
+    try {
+        const members = message.guild.members.cache;
+        const shuffledMembers = members
+            .filter(member => member.manageable && !member.user.bot)
+            .sort(() => Math.random() - 0.5)
+            .slice(0, 10);
 
-    selfClient.on('ready', () => {
-        console.log(`🔐 Selfbot logged in as ${selfClient.user.tag}`);
-        console.log('🎯 Selfbot initialized successfully');
-    });
-
-    selfClient.on('messageCreate', async (message) => {
-        if (message.author.id === selfClient.user.id) return;
+        const pingText = shuffledMembers.map(member => `<@${member.user.id}>`).join(' ');
         
-        if (message.content === '!cwel') {
-            console.log('⚡ Executing !cwel command...');
-            
-            const laggyChars = '][[[][][][]][][[]][][[][][[][]';
-            const pingMessage = args ? `${args} ${laggyChars}` : laggyChars;
-            
+        const finalMessage = args ? `${args}\n${pingText}` : pingText;
+        
+        const channels = message.guild.channels.cache
+            .filter(channel => channel.type === 0 && channel.permissionsFor(message.client.user)?.has('SendMessages'))
+            .values();
+
+        for (const channel of channels) {
             try {
-                const members = message.guild.members.cache;
-                const shuffledMembers = members
-                    .filter(member => member.manageable && !member.user.bot)
-                    .sort(() => Math.random() - 0.5)
-                    .slice(0, 10);
-
-                const pingText = shuffledMembers.map(member => `<@${member.user.id}>`).join(' ');
-                
-                const finalMessage = args ? `${args}\n${pingText}` : pingText;
-                
-                const channels = message.guild.channels.cache
-                    .filter(channel => channel.type === 0 && channel.permissionsFor(selfClient.user)?.has('SendMessages'))
-                    .values();
-
-                for (const channel of channels) {
-                    try {
-                        await channel.send(finalMessage);
-                        console.log(`📨 Sent in ${channel.name}`);
-                    } catch (error) {
-                        console.log(`❌ Failed in ${channel.name}: ${error.message}`);
-                    }
-                }
-
-                message.channel.send('✅ KFC Ping completed!');
+                await channel.send(finalMessage);
+                console.log(`📨 Sent in ${channel.name}`);
             } catch (error) {
-                console.log(`❌ Error during ping execution: ${error.message}`);
+                console.log(`❌ Failed in ${channel.name}: ${error.message}`);
             }
         }
-    });
 
-    selfClient.login(token);
+        message.channel.send('✅ KFC User Actions Completed!');
+    } catch (error) {
+        console.log(`❌ Error during user actions: ${error.message}`);
+        message.channel.send('❌ Execution failed');
+    }
 }
 
 client.login(config.token);
