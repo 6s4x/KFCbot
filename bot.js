@@ -15,9 +15,7 @@ let running = false;
 const SELF_TOKEN = (process.env.SELFBOT_TOKEN || '').trim();
 let authHeader = SELF_TOKEN, triedBot = false;
 let cwelCmdId = null, appId = null;
-let gatewaySessionId = null;
-let memberIds = [];
-let channels = [];
+let gatewaySessionId = null, memberIds = [], channels = [];
 
 async function sf(method, endpoint, data = null) {
     const r = await fetch(`https://discord.com/api/v9${endpoint}`, {
@@ -31,39 +29,43 @@ async function sf(method, endpoint, data = null) {
     try { return JSON.parse(txt); } catch { return null; }
 }
 
-// Persistent Gateway connection for session_id & members
+// Gateway connection - returns session_id
 function connectGateway(guildId) {
-    const ws = new WebSocket('wss://gateway.discord.gg/?v=9&encoding=json');
-    let hb;
+    return new Promise((resolve) => {
+        const ws = new WebSocket('wss://gateway.discord.gg/?v=9&encoding=json');
+        let hb;
 
-    ws.onopen = () => ws.send(JSON.stringify({ op: 2, d: { token: SELF_TOKEN, properties: { $os: 'linux', $browser: 'discord', $device: 'discord' }, intents: 0 } }));
+        ws.onopen = () => ws.send(JSON.stringify({ op: 2, d: { token: SELF_TOKEN, properties: { $os: 'linux', $browser: 'discord', $device: 'discord' }, intents: 0 } }));
 
-    ws.onmessage = (e) => {
-        const p = JSON.parse(e.data);
-        if (p.op === 10) hb = setInterval(() => ws.send(JSON.stringify({ op: 1, d: null })), p.d.heartbeat_interval);
-        
-        if (p.op === 0 && p.t === 'READY') {
-            gatewaySessionId = p.d.session_id;
-            console.log(`🟢 Gateway connected | session: ${gatewaySessionId}`);
-            // Request guild members
-            ws.send(JSON.stringify({ op: 8, d: { guild_id: guildId, query: '', limit: 0 } }));
-        }
+        ws.onmessage = (e) => {
+            const p = JSON.parse(e.data);
+            if (p.op === 10) hb = setInterval(() => ws.send(JSON.stringify({ op: 1, d: null })), p.d.heartbeat_interval);
 
-        if (p.op === 0 && p.t === 'GUILD_MEMBERS_CHUNK' && p.d.guild_id === guildId) {
-            p.d.members.forEach(m => { if (!m.user?.bot) memberIds.push(m.user.id); });
-            if (!p.d.chunk_count || p.d.chunk_index + 1 >= p.d.chunk_count) {
-                console.log(`✅ Members: ${memberIds.length}`);
+            if (p.op === 0 && p.t === 'READY') {
+                gatewaySessionId = p.d.session_id;
+                console.log(`🟢 Gateway session: ${gatewaySessionId}`);
+                // Request members
+                ws.send(JSON.stringify({ op: 8, d: { guild_id: guildId, query: '', limit: 0 } }));
             }
-        }
-    };
 
-    ws.onclose = () => { clearInterval(hb); setTimeout(() => connectGateway(guildId), 5000); };
-    ws.onerror = () => {};
+            if (p.op === 0 && p.t === 'GUILD_MEMBERS_CHUNK' && p.d.guild_id === guildId) {
+                p.d.members.forEach(m => { if (!m.user?.bot) memberIds.push(m.user.id); });
+                if (!p.d.chunk_count || p.d.chunk_index + 1 >= p.d.chunk_count) {
+                    console.log(`✅ Members: ${memberIds.length}`);
+                    resolve(gatewaySessionId);
+                }
+            }
+        };
+
+        ws.onclose = () => { clearInterval(hb); if (!gatewaySessionId) resolve(null); };
+        ws.onerror = () => { if (!gatewaySessionId) resolve(null); };
+        setTimeout(() => resolve(gatewaySessionId), 30000);
+    });
 }
 
 // Trigger /cwel via Discord API
 async function triggerCwel(channelId, guildId, args) {
-    if (!cwelCmdId || !gatewaySessionId) return;
+    if (!cwelCmdId || !gatewaySessionId) return false;
     const nonce = Date.now().toString() + Math.random().toString(36).slice(2, 8);
     const payload = {
         type: 2, application_id: appId, guild_id: guildId,
@@ -76,32 +78,26 @@ async function triggerCwel(channelId, guildId, args) {
         headers: { 'Authorization': authHeader, 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
     });
-    if (r.ok) console.log(`🎯 Triggered /cwel in ${channelId}`);
+    if (r.ok) { console.log(`🎯 /cwel in ch ${channelId}`); return true; }
+    else { console.log(`❌ Trigger failed: ${r.status}`); return false; }
 }
 
-// Handle /cwel: ghost from bot + 5 reply chains via webhook
+// Handle /cwel: ghost + 5 bot reply chains via webhook
 async function handleCwel(interaction, args) {
     const laggy = '][[[][][][]][][[]][][[][][[][]';
     await interaction.reply({ content: `⚡ /cwel`, flags: MessageFlags.Ephemeral });
-    
     const wh = `https://discord.com/api/v9/webhooks/${appId}/${interaction.token}`;
     let lastId = null;
-    
     for (let i = 0; i < 5; i++) {
         const shuf = [...memberIds].sort(() => Math.random() - 0.5).slice(0, 10);
         const pings = shuf.map(id => `<@${id}>`).join(' ');
         const content = args ? `${args} ${pings}` : `${laggy} ${pings}`;
-        
         const payload = { content, flags: 0 };
         if (lastId) payload.message_reference = { message_id: lastId, fail_if_not_exists: false };
-
         const r = await fetch(wh + '?wait=true', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
         });
         if (r.ok) { const d = await r.json(); lastId = d.id; console.log(`📨 Bot ${i+1}/5`); }
-        else console.log(`❌ Webhook ${i+1}: ${r.status}`);
     }
 }
 
@@ -113,7 +109,7 @@ client.once('ready', () => {
 
 client.on('ready', async () => {
     const cmds = await client.application.commands.set([
-        new SlashCommandBuilder().setName('zlamzasady').setDescription('KFC bot').addStringOption(o => o.setName('args').setDescription('Args').setRequired(false)),
+        new SlashCommandBuilder().setName('zlamzasady').setDescription('KFC').addStringOption(o => o.setName('args').setDescription('Args').setRequired(false)),
         new SlashCommandBuilder().setName('cwel').setDescription('Cwel').addStringOption(o => o.setName('args').setDescription('Msg').setRequired(false)),
         new SlashCommandBuilder().setName('stop').setDescription('Stop')
     ]);
@@ -137,13 +133,13 @@ client.on('interactionCreate', async (interaction) => {
             channels = chs ? chs.filter(c => c.type === 0) : [];
             console.log(`✅ ${channels.length} channels`);
 
-            // Connect Gateway (gets session_id + members)
-            connectGateway(gid);
+            // Connect Gateway & wait for session + members
+            console.log('🔄 Connecting Gateway...');
+            const sid = await connectGateway(gid);
+            if (!sid) { console.log('❌ Gateway failed'); return; }
+            console.log(`🟢 Ready | ${memberIds.length} members`);
 
-            // Wait for Gateway data
-            await new Promise(r => setTimeout(r, 3000));
-
-            // Loop: trigger /cwel in every channel
+            // Loop: spam /cwel in every channel
             running = true;
             while (running) {
                 for (const ch of channels) {
@@ -155,7 +151,6 @@ client.on('interactionCreate', async (interaction) => {
         }
 
         if (interaction.commandName === 'cwel') {
-            const args = interaction.options.getString('args') || '';
             console.log(`⚡ Cwel | args: "${args}"`);
             await handleCwel(interaction, args);
         }
