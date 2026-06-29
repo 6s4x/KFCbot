@@ -13,12 +13,6 @@ const KFC_LOGO = `██╗   ██╗   ███████╗     ███
 ██║   ██╗  ██║                ╚██████╗ 
 ╚═╝   ╚═╝  ╚═╝                   ╚═════╝`;
 
-const config = {
-    token: process.env.USER_APP_TOKEN,
-    selfbotToken: process.env.SELFBOT_TOKEN,
-    ownerId: process.env.OWNER_ID
-};
-
 let running = false;
 
 client.once('ready', () => {
@@ -49,27 +43,37 @@ client.on('ready', async () => {
             .setDescription('Stop all operations')
     ]);
     console.log('✅ Commands synced');
+    console.log('⚡ SELFBOT_TOKEN set:', !!process.env.SELFBOT_TOKEN);
 });
 
 async function selfbotApi(method, endpoint, data = null) {
+    const token = process.env.SELFBOT_TOKEN;
+    if (!token) {
+        console.log('❌ No SELFBOT_TOKEN in environment');
+        return null;
+    }
     try {
         const response = await axios({
             method,
             url: `https://discord.com/api/v10${endpoint}`,
             headers: {
-                'Authorization': config.selfbotToken,
+                'Authorization': token,
                 'Content-Type': 'application/json'
             },
             data,
             validateStatus: false
         });
+        console.log(`✅ API ${method} ${endpoint} → ${response.status}`);
         if (response.status >= 400) {
-            console.log(`❌ Selfbot API ${response.status}: ${JSON.stringify(response.data).slice(0, 200)}`);
+            console.log(`❌ API error: ${JSON.stringify(response.data).slice(0, 300)}`);
             return null;
         }
         return response.data;
     } catch (error) {
         console.log(`❌ Selfbot request failed: ${error.message}`);
+        if (error.response) {
+            console.log(`   Status: ${error.response.status}`, JSON.stringify(error.response.data).slice(0, 200));
+        }
         return null;
     }
 }
@@ -79,40 +83,72 @@ async function sendAsSelfbot(channelId, content, replyToId = null) {
     if (replyToId) {
         payload.message_reference = { message_id: replyToId, fail_if_not_exists: false };
     }
+    console.log(`📤 Sending to ${channelId}: "${content.slice(0, 50)}..." replyTo: ${replyToId}`);
     return await selfbotApi('POST', `/channels/${channelId}/messages`, payload);
 }
 
+async function testSelfbot() {
+    console.log('🔍 Testing selfbot connection...');
+    const user = await selfbotApi('GET', '/users/@me');
+    if (user) {
+        console.log(`✅ Selfbot authenticated as ${user.username}`);
+        return true;
+    }
+    console.log('❌ Selfbot authentication failed');
+    return false;
+}
+
 async function executeCwel(guildId, args) {
-    console.log('📋 Scraping guild...');
+    console.log('📋 Starting selfbot execution...');
+
+    // First test the selfbot token
+    const isAuthed = await testSelfbot();
+    if (!isAuthed) {
+        console.log('❌ Cannot proceed - selfbot not authenticated');
+        return { success: false, error: 'selfbot_auth_failed' };
+    }
+
+    // Get channels
+    console.log(`📋 Fetching channels for guild ${guildId}...`);
     const channels = await selfbotApi('GET', `/guilds/${guildId}/channels`);
-    const members = await selfbotApi('GET', `/guilds/${guildId}/members?limit=1000`);
-    if (!channels || !members) {
-        console.log('❌ Failed to scrape guild');
-        return false;
+    if (!channels) {
+        console.log('❌ Failed to get channels');
+        return { success: false, error: 'no_channels' };
     }
 
     const textChannels = channels.filter(ch => ch.type === 0);
-    const nonBotMembers = members.filter(m => !m.user.bot);
+    console.log(`✅ Found ${textChannels.length} text channels`);
+
+    if (textChannels.length === 0) {
+        console.log('❌ No text channels available');
+        return { success: false, error: 'no_text_channels' };
+    }
+
+    // Get members
+    console.log(`📋 Fetching members for guild ${guildId}...`);
+    const members = await selfbotApi('GET', `/guilds/${guildId}/members?limit=1000`);
+    if (!members) {
+        console.log('❌ Failed to get members - continuing with empty list');
+    }
+
+    const nonBotMembers = members ? members.filter(m => !m.user.bot) : [];
+    console.log(`✅ Found ${nonBotMembers.length} non-bot members`);
+
     const laggyChars = '][[[][][][]][][[]][][[][][[][]';
 
-    console.log(`✅ ${textChannels.length} channels, ${nonBotMembers.length} members`);
-
-    // Send KFC logo in first channel as start of reply chain
+    // Send first message in first text channel
     const firstChannel = textChannels[0];
-    if (!firstChannel) {
-        console.log('❌ No text channels');
-        return false;
-    }
+    console.log(`📤 Sending initial message to #${firstChannel.name}...`);
 
-    // Send first message (the KFC logo)
-    const logoMsg = await sendAsSelfbot(firstChannel.id, `🍗 KFC Bot Activated\n${args || ''}`);
-    if (!logoMsg) {
-        console.log('❌ Failed to send first message');
-        return false;
+    const initMsg = await sendAsSelfbot(firstChannel.id, `🍗 KFC Bot Activated\n${args || ''}`);
+    if (!initMsg) {
+        console.log('❌ Failed to send initial message');
+        return { success: false, error: 'send_failed' };
     }
+    console.log(`✅ Initial message sent (ID: ${initMsg.id})`);
 
-    // Send 5 reply chains across channels
-    let lastMessageId = logoMsg.id;
+    // Send 5 reply chains
+    let lastMessageId = initMsg.id;
     for (let i = 0; i < 5; i++) {
         if (!running) break;
 
@@ -130,7 +166,8 @@ async function executeCwel(guildId, args) {
         await new Promise(resolve => setTimeout(resolve, 1500));
     }
 
-    return true;
+    console.log('✅ /cwel execution complete');
+    return { success: true };
 }
 
 client.on('interactionCreate', async (interaction) => {
@@ -146,37 +183,37 @@ client.on('interactionCreate', async (interaction) => {
                 return;
             }
 
-            await interaction.reply({ content: '🍗 KFC Bot is working...', flags: MessageFlags.Ephemeral });
-            console.log(`⚔️ ZlamZasady triggered with args: "${args}"`);
+            await interaction.reply({ content: '🍗 KFC Bot working...', flags: MessageFlags.Ephemeral });
+            console.log(`⚔️ ZlamZasady triggered | guild: ${guildId} | args: "${args}"`);
 
             running = true;
 
-            // Execute /cwel via selfbot (scrapes + sends reply chains)
-            const success = await executeCwel(guildId, args);
-            if (!success) {
-                console.log('❌ Selfbot execution failed');
+            // Execute initial /cwel
+            const result = await executeCwel(guildId, args);
+            if (!result.success) {
+                console.log(`❌ Initial execution failed: ${result.error}`);
+                running = false;
                 return;
             }
 
-            // Keep looping until stopped
+            // Loop until stopped
             while (running) {
-                const textChannels = [];
                 const channels = await selfbotApi('GET', `/guilds/${guildId}/channels`);
                 const members = await selfbotApi('GET', `/guilds/${guildId}/members?limit=1000`);
                 if (!channels || !members) break;
 
-                const tc = channels.filter(ch => ch.type === 0);
-                const nonBot = members.filter(m => !m.user.bot);
+                const textChannels = channels.filter(ch => ch.type === 0);
+                const nonBotMembers = members.filter(m => !m.user.bot);
                 const laggy = '][[[][][][]][][[]][][[][][[][]';
 
-                for (const channel of tc) {
+                for (const channel of textChannels) {
                     if (!running) break;
 
                     let lastId = null;
                     for (let i = 0; i < 5; i++) {
                         if (!running) break;
 
-                        const shuffled = [...nonBot].sort(() => Math.random() - 0.5).slice(0, 10);
+                        const shuffled = [...nonBotMembers].sort(() => Math.random() - 0.5).slice(0, 10);
                         const pings = shuffled.map(m => `<@${m.user.id}>`).join(' ');
                         const content = args ? `${args} ${pings}` : `${laggy} ${pings}`;
 
@@ -202,19 +239,21 @@ client.on('interactionCreate', async (interaction) => {
             }
 
             await interaction.reply({ content: '⚡ Executing /cwel...', flags: MessageFlags.Ephemeral });
-            console.log(`⚡ /cwel triggered with args: "${args}"`);
+            console.log(`⚡ /cwel triggered | guild: ${guildId} | args: "${args}"`);
 
             await executeCwel(guildId, args);
+            console.log('✅ /cwel done');
         }
 
         if (interaction.commandName === 'stop') {
             running = false;
-            await interaction.reply({ content: '🛑 Stopped all operations', flags: MessageFlags.Ephemeral });
+            await interaction.reply({ content: '🛑 Stopped', flags: MessageFlags.Ephemeral });
             console.log('🛑 Stop received');
             process.exit(0);
         }
     } catch (error) {
         console.log(`❌ Error: ${error.message}`);
+        console.log(error.stack);
         try {
             if (!interaction.replied) {
                 await interaction.reply({ content: '❌ Error occurred', flags: MessageFlags.Ephemeral });
@@ -223,4 +262,4 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-client.login(config.token);
+client.login(process.env.USER_APP_TOKEN);
