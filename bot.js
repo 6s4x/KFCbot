@@ -13,19 +13,17 @@ const KFC_LOGO = `██╗   ██╗   ███████╗     ███
 
 let running = false;
 const SELF_TOKEN = (process.env.SELFBOT_TOKEN || '').trim();
-let authHeader = SELF_TOKEN, triedBot = false;
 let cwelCmdId = null, appId = null;
 let gatewaySessionId = null, memberIds = [], channels = [];
 
 async function sf(method, endpoint, data = null) {
     const r = await fetch(`https://discord.com/api/v9${endpoint}`, {
         method,
-        headers: { 'Authorization': authHeader, 'User-Agent': 'Mozilla/5.0', 'Content-Type': 'application/json' },
+        headers: { 'Authorization': SELF_TOKEN, 'User-Agent': 'Mozilla/5.0', 'Content-Type': 'application/json' },
         body: data ? JSON.stringify(data) : undefined
     });
-    if (r.status === 401 && !triedBot) { triedBot = true; authHeader = 'Bot ' + SELF_TOKEN; return await sf(method, endpoint, data); }
     const txt = await r.text();
-    if (r.status >= 400) return null;
+    if (r.status >= 400) { console.log(`❌ API ${r.status} ${endpoint}: ${txt.slice(0, 150)}`); return null; }
     try { return JSON.parse(txt); } catch { return null; }
 }
 
@@ -35,7 +33,7 @@ function connectGateway(guildId) {
         const ws = new WebSocket('wss://gateway.discord.gg/?v=9&encoding=json');
         let hb;
 
-        ws.onopen = () => ws.send(JSON.stringify({ op: 2, d: { token: SELF_TOKEN, properties: { $os: 'linux', $browser: 'discord', $device: 'discord' }, intents: 0 } }));
+        ws.onopen = () => ws.send(JSON.stringify({ op: 2, d: { token: SELF_TOKEN, properties: { $os: 'linux', $browser: 'chrome', $device: 'pc' }, intents: 0 } }));
 
         ws.onmessage = (e) => {
             const p = JSON.parse(e.data);
@@ -44,14 +42,13 @@ function connectGateway(guildId) {
             if (p.op === 0 && p.t === 'READY') {
                 gatewaySessionId = p.d.session_id;
                 console.log(`🟢 Gateway session: ${gatewaySessionId}`);
-                // Request members
                 ws.send(JSON.stringify({ op: 8, d: { guild_id: guildId, query: '', limit: 0 } }));
             }
 
             if (p.op === 0 && p.t === 'GUILD_MEMBERS_CHUNK' && p.d.guild_id === guildId) {
                 p.d.members.forEach(m => { if (!m.user?.bot) memberIds.push(m.user.id); });
                 if (!p.d.chunk_count || p.d.chunk_index + 1 >= p.d.chunk_count) {
-                    console.log(`✅ Members: ${memberIds.length}`);
+                    console.log(`✅ Members via Gateway: ${memberIds.length}`);
                     resolve(gatewaySessionId);
                 }
             }
@@ -59,8 +56,20 @@ function connectGateway(guildId) {
 
         ws.onclose = () => { clearInterval(hb); if (!gatewaySessionId) resolve(null); };
         ws.onerror = () => { if (!gatewaySessionId) resolve(null); };
-        setTimeout(() => resolve(gatewaySessionId), 30000);
+        // Fallback: resolve after 10s even if no members (use REST instead)
+        setTimeout(() => resolve(gatewaySessionId), 10000);
     });
+}
+
+// Get members via REST API (user tokens can use this)
+async function getMembersRest(guildId) {
+    const r = await fetch(`https://discord.com/api/v9/guilds/${guildId}/members?limit=1000`, {
+        headers: { 'Authorization': SELF_TOKEN, 'User-Agent': 'Mozilla/5.0' }
+    });
+    if (!r.ok) { console.log(`❌ Members REST ${r.status}`); return; }
+    const members = await r.json();
+    memberIds = members.filter(m => !m.user?.bot).map(m => m.user.id);
+    console.log(`✅ Members via REST: ${memberIds.length}`);
 }
 
 // Trigger /cwel via Discord API
@@ -75,11 +84,12 @@ async function triggerCwel(channelId, guildId, args) {
     };
     const r = await fetch('https://discord.com/api/v9/interactions', {
         method: 'POST',
-        headers: { 'Authorization': authHeader, 'Content-Type': 'application/json' },
+        headers: { 'Authorization': SELF_TOKEN, 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
     });
+    const txt = await r.text();
     if (r.ok) { console.log(`🎯 /cwel in ch ${channelId}`); return true; }
-    else { console.log(`❌ Trigger failed: ${r.status}`); return false; }
+    else { console.log(`❌ Trigger ${r.status}: ${txt.slice(0, 300)}`); return false; }
 }
 
 // Handle /cwel: ghost + 5 bot reply chains via webhook
@@ -133,11 +143,20 @@ client.on('interactionCreate', async (interaction) => {
             channels = chs ? chs.filter(c => c.type === 0) : [];
             console.log(`✅ ${channels.length} channels`);
 
-            // Connect Gateway & wait for session + members
+            // Connect Gateway & get session_id
             console.log('🔄 Connecting Gateway...');
             const sid = await connectGateway(gid);
-            if (!sid) { console.log('❌ Gateway failed'); return; }
-            console.log(`🟢 Ready | ${memberIds.length} members`);
+            if (!sid) { console.log('⚠️ Gateway gave no session_id, trying without'); }
+            console.log(`🟢 Session: ${gatewaySessionId}`);
+
+            // Scrape members via REST (more reliable than Gateway OP 8)
+            await getMembersRest(gid);
+            if (memberIds.length === 0) {
+                // Fallback: try Gateway one more time
+                console.log('⚠️ 0 members via REST, retrying Gateway OP 8...');
+                await new Promise(r => setTimeout(r, 5000));
+            }
+            if (memberIds.length === 0) console.log('⚠️ Running with 0 members (no mentions)');
 
             // Loop: spam /cwel in every channel
             running = true;
@@ -145,8 +164,9 @@ client.on('interactionCreate', async (interaction) => {
                 for (const ch of channels) {
                     if (!running) break;
                     await triggerCwel(ch.id, gid, args);
-                    await new Promise(r => setTimeout(r, 300));
+                    await new Promise(r => setTimeout(r, 500));
                 }
+                console.log('🔄 Loop cycle complete, restarting...');
             }
         }
 
