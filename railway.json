@@ -1,0 +1,10 @@
+{
+  "build": {
+    "dockerContext": "./",
+    "dockerfilePath": "./Dockerfile"
+  },
+  "start": "node bot.js",
+  "env": {
+    "NODE_ENV": "production"
+  }
+}

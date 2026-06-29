@@ -1,0 +1,19 @@
+{
+  "name": "kfcbot",
+  "version": "1.0.0",
+  "description": "KFC Discord Bot with selfbot functionality",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "bot": "node bot.js",
+    "selfbot": "node selfbot.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "axios": "^1.6.2",
+    "dotenv": "^16.3.1"
+  },
+  "keywords": ["discord", "bot", "kfc"],
+  "author": "",
+  "license": "MIT"
+}
