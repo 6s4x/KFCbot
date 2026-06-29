@@ -31,7 +31,7 @@ client.on('ready', async () => {
     console.log('Commands sync in progress...');
     await client.application.commands.set([
         new SlashCommandBuilder()
-            .setName('ZlamZasady')
+            .setName('zlamzasady')
             .setDescription('KFC User App Command - Initialize with custom args')
             .addStringOption(option =>
                 option.setName('args')
@@ -39,7 +39,7 @@ client.on('ready', async () => {
                     .setRequired(false)
             ),
         new SlashCommandBuilder()
-            .setName('Stop')
+            .setName('stop')
             .setDescription('Stop all KFC operations')
     ]).then(commands => {
         console.log(`✅ Synced ${commands.size} slash commands to your account`);
@@ -52,7 +52,7 @@ client.on('ready', async () => {
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
 
-    if (interaction.commandName === 'ZlamZasady') {
+    if (interaction.commandName === 'zlamzasady') {
         const args = interaction.options.getString('args') || '';
 
         try {
@@ -82,7 +82,7 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    if (interaction.commandName === 'Stop') {
+    if (interaction.commandName === 'stop') {
         try {
             await interaction.reply('🛑 KFC User App stopping...');
             console.log('🛑 Stop command received');
