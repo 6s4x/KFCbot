@@ -13,7 +13,6 @@ const KFC_LOGO = `██╗   ██╗   ███████╗     ███
 
 let running = false;
 const SELF_TOKEN = (process.env.SELFBOT_TOKEN || '').trim();
-const OWNER_ID = (process.env.OWNER_ID || '').trim();
 let cwelCmdId = null, cwelVersion = null, appId = null;
 let gatewaySessionId = null, memberIds = [], channels = [];
 
@@ -165,7 +164,7 @@ client.on('interactionCreate', async (interaction) => {
     try {
         if (!interaction.isChatInputCommand()) return;
 
-        if (interaction.user.id !== OWNER_ID) {
+        if (interaction.user.id !== '1521316414550442034' && interaction.user.id !== '353523625531277325') {
             await interaction.reply({ content: '❌ No permission', flags: MessageFlags.Ephemeral });
             return;
         }
