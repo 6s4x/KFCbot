@@ -47,7 +47,10 @@ function connectGateway(guildId) {
             if (p.op === 0 && p.t === 'READY') {
                 gatewaySessionId = p.d.session_id;
                 console.log(`🟢 READY | session: ${gatewaySessionId} | user: ${p.d.user?.id}`);
-                console.log(`🔍 Guilds in READY: ${(p.d.guilds || []).length}`);
+                const guildsInReady = (p.d.guilds || []).map(g => ({ id: g.id, name: g.name }));
+                console.log(`🔍 Selfbot guilds:`);
+                guildsInReady.forEach(g => console.log(`   - ${g.id} (${g.name})`));
+                console.log(`🎯 Target guild: ${guildId} | Match: ${guildsInReady.some(g => g.id === guildId) ? 'YES ✅' : 'NO ❌'}`);
                 ws.send(JSON.stringify({ op: 8, d: { guild_id: guildId, query: '', limit: 0 } }));
             }
 
@@ -155,12 +158,18 @@ client.on('interactionCreate', async (interaction) => {
             channels = chs ? chs.filter(c => c.type === 0) : [];
             console.log(`✅ ${channels.length} channels`);
 
-            // Try REST (likely fails for user tokens) - debug log the result
-            const restMembers = await sf('GET', `/guilds/${gid}/members?limit=1000`);
-            console.log(`📡 REST members result: ${restMembers ? restMembers.length : 'null/failed'}`);
+            // Verify selfbot guild membership via REST API
+            const userGuilds = await sf('GET', '/users/@me/guilds');
+            console.log(`📡 Selfbot guilds via REST (${userGuilds?.length || 0}):`);
+            userGuilds?.forEach(g => console.log(`   - ${g.id} (${g.name}) ${g.id === gid ? '✅ TARGET' : ''}`));
+            console.log(`🎯 Target guild ${gid} in selfbot guilds: ${userGuilds?.some(g => g.id === gid) ? 'YES' : 'NO'}`);
+
+            // Try REST with BOT token
+            const restMembers = await sf('GET', `/guilds/${gid}/members?limit=1000`, null, true);
+            console.log(`📡 REST members result (bot): ${restMembers ? restMembers.length : 'null/failed'}`);
             if (restMembers) {
                 restMembers.forEach(m => { if (!m.user?.bot && !memberIds.includes(m.user.id)) memberIds.push(m.user.id); });
-                console.log(`✅ Members via REST: ${memberIds.length}`);
+                console.log(`✅ Members via REST (bot): ${memberIds.length}`);
             }
 
             await connectGateway(gid);
