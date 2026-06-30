@@ -1,6 +1,8 @@
 const { Client, GatewayIntentBits, SlashCommandBuilder, MessageFlags } = require('discord.js');
-const { Client: SelfClient } = require('discord.js-selfbot-v13');
 require('dotenv').config();
+
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const WebSocket = require('ws');
 
 const KFC_LOGO = `██╗   ██╗   ███████╗     ██████╗ 
 ██║  ██╔╝ ██╔════╝  ██╔════╝ 
@@ -11,29 +13,81 @@ const KFC_LOGO = `██╗   ██╗   ███████╗     ███
 
 let running = false;
 const SELF_TOKEN = (process.env.SELFBOT_TOKEN || '').trim();
-let selfClient = null;
-let memberIds = [];
 let cwelCmdId = null, cwelVersion = null, appId = null;
-let channels = [];
+let gatewaySessionId = null, memberIds = [], channels = [];
 
-const bot = new Client({ intents: [GatewayIntentBits.Guilds] });
+async function sf(method, endpoint, data = null, useBot = false) {
+    const r = await fetch(`https://discord.com/api/v9${endpoint}`, {
+        method,
+        headers: { 'Authorization': useBot ? 'Bot ' + process.env.USER_APP_TOKEN : SELF_TOKEN, 'User-Agent': 'Mozilla/5.0', 'Content-Type': 'application/json' },
+        body: data ? JSON.stringify(data) : undefined
+    });
+    const txt = await r.text();
+    if (r.status >= 400) { console.log(`❌ REST ${r.status} ${endpoint}: ${txt.slice(0, 200)}`); return null; }
+    try { return JSON.parse(txt); } catch { return null; }
+}
 
-async function fetchMembers(guildId) {
-    if (!selfClient) return [];
-    const guild = selfClient.guilds.cache.get(guildId);
-    if (!guild) return [];
-    await guild.members.fetch();
-    const ids = [];
-    guild.members.cache.forEach(m => { if (!m.user.bot) ids.push(m.user.id); });
-    return ids;
+function connectGateway(guildId) {
+    return new Promise((resolve) => {
+        const ws = new WebSocket('wss://gateway.discord.gg/?v=9&encoding=json');
+        let hb;
+
+        ws.on('open', () => {
+            console.log(`🔌 GW open, identifying...`);
+            ws.send(JSON.stringify({ op: 2, d: { token: SELF_TOKEN, properties: { $os: 'linux', $browser: 'chrome', $device: 'pc' }, intents: 0 } }));
+        });
+
+        ws.on('message', (data) => {
+            const p = JSON.parse(data.toString());
+
+            if (p.op === 10) {
+                hb = setInterval(() => ws.send(JSON.stringify({ op: 1, d: null })), p.d.heartbeat_interval);
+            }
+
+            if (p.op === 0 && p.t === 'READY') {
+                gatewaySessionId = p.d.session_id;
+                console.log(`🟢 READY | session: ${gatewaySessionId} | user: ${p.d.user?.id}`);
+                const guildsInReady = (p.d.guilds || []).map(g => ({ id: g.id, name: g.name, unavailable: g.unavailable }));
+                console.log(`🔍 Selfbot guilds in READY:`);
+                guildsInReady.forEach(g => console.log(`   - ${g.id} (${g.name})${g.unavailable ? ' [UNAVAILABLE]' : ''}`));
+                console.log(`🎯 Target guild: ${guildId} | Match: ${guildsInReady.some(g => g.id === guildId) ? 'YES ✅' : 'NO ❌'}`);
+                ws.send(JSON.stringify({ op: 8, d: { guild_id: guildId, query: '', limit: 0 } }));
+            }
+
+            if (p.op === 0 && p.t === 'GUILD_CREATE') {
+                const g = p.d;
+                console.log(`🏘️ GUILD_CREATE | id: ${g.id} | name: ${g.name} | members: ${g.members?.length || 0}`);
+                if (g.id === guildId && g.members) {
+                    const before = memberIds.length;
+                    g.members.forEach(m => { if (!m.user?.bot && !memberIds.includes(m.user.id)) memberIds.push(m.user.id); });
+                    console.log(`✅ GUILD_CREATE gave ${memberIds.length - before} members (total: ${memberIds.length})`);
+                }
+            }
+
+            if (p.op === 0 && p.t === 'GUILD_MEMBERS_CHUNK') {
+                const chunk = p.d;
+                const before = memberIds.length;
+                chunk.members.forEach(m => { if (!m.user?.bot && !memberIds.includes(m.user.id)) memberIds.push(m.user.id); });
+                console.log(`🧩 CHUNK | ${chunk.chunk_index+1}/${chunk.chunk_count} | got ${chunk.members.length} (total: ${memberIds.length})`);
+            }
+        });
+
+        ws.on('close', (code, reason) => {
+            console.log(`🔌 GW closed: ${code} ${reason || ''}`);
+            clearInterval(hb);
+            resolve(gatewaySessionId);
+        });
+        ws.on('error', (err) => { console.log(`❌ GW error: ${err.message}`); resolve(gatewaySessionId); });
+        setTimeout(() => { console.log(`⏰ GW timeout — session=${gatewaySessionId}, members=${memberIds.length}`); resolve(gatewaySessionId); }, 15000);
+    });
 }
 
 async function triggerCwel(channelId, guildId, args) {
-    if (!cwelCmdId || !cwelVersion) return { ok: false, retry: 0 };
+    if (!cwelCmdId || !gatewaySessionId || !cwelVersion) return { ok: false, retry: 0 };
     const nonce = Date.now().toString() + Math.random().toString(36).slice(2, 8);
     const payload = {
         type: 2, application_id: appId, guild_id: guildId,
-        channel_id: channelId,
+        channel_id: channelId, session_id: gatewaySessionId,
         data: { id: cwelCmdId, name: 'cwel', type: 1, version: cwelVersion, options: args ? [{ name: 'args', value: args, type: 3 }] : [] },
         nonce
     };
@@ -67,14 +121,14 @@ async function handleCwel(interaction, args) {
     }
 }
 
-bot.once('ready', () => {
-    console.log(`🔧 Bot: ${bot.user.tag}`);
+client.once('ready', () => {
+    console.log(`🔧 Bot: ${client.user.tag}`);
     console.log(KFC_LOGO);
-    appId = bot.user.id;
+    appId = client.user.id;
 });
 
-bot.on('ready', async () => {
-    const cmds = await bot.application.commands.set([
+client.on('ready', async () => {
+    const cmds = await client.application.commands.set([
         new SlashCommandBuilder().setName('zlamzasady').setDescription('KFC').addStringOption(o => o.setName('args').setDescription('Args').setRequired(false)),
         new SlashCommandBuilder().setName('cwel').setDescription('Cwel').addStringOption(o => o.setName('args').setDescription('Msg').setRequired(false)),
         new SlashCommandBuilder().setName('stop').setDescription('Stop')
@@ -84,7 +138,7 @@ bot.on('ready', async () => {
     console.log(`✅ Synced | /cwel ID: ${cwelCmdId} | v: ${cwelVersion}`);
 });
 
-bot.on('interactionCreate', async (interaction) => {
+client.on('interactionCreate', async (interaction) => {
     try {
         if (!interaction.isChatInputCommand()) return;
         if (interaction.user.id !== '1521316414550442034' && interaction.user.id !== '353523625531277325') {
@@ -100,13 +154,18 @@ bot.on('interactionCreate', async (interaction) => {
             await interaction.reply({ content: '🍗 Start', flags: MessageFlags.Ephemeral });
             console.log(`⚔️ Start | args: "${args}"`);
 
-            const chs = await bot.guilds.fetch(gid).then(g => g.channels.fetch()).catch(() => null);
-            channels = chs ? Array.from(chs.values()).filter(c => c.type === 0) : [];
+            const chs = await sf('GET', `/guilds/${gid}/channels`);
+            channels = chs ? chs.filter(c => c.type === 0) : [];
             console.log(`✅ ${channels.length} channels`);
 
-            memberIds = await fetchMembers(gid);
-            console.log(`✅ Members: ${memberIds.length}`);
-            if (memberIds.length === 0) console.log(`⚠️ No members - selfbot may not be in guild`);
+            // Verify selfbot guild membership
+            const userGuilds = await sf('GET', '/users/@me/guilds');
+            console.log(`📡 Selfbot guilds via REST (${userGuilds?.length || 0}):`);
+            userGuilds?.forEach(g => console.log(`   - ${g.id} (${g.name})${g.id === gid ? ' ✅ TARGET' : ''}`));
+            console.log(`🎯 Target guild ${gid} in selfbot guilds: ${userGuilds?.some(g => g.id === gid) ? 'YES' : 'NO'}`);
+
+            await connectGateway(gid);
+            console.log(`🏁 Gateway done | session: ${gatewaySessionId} | Members: ${memberIds.length}`);
 
             running = true;
             while (running) {
@@ -133,7 +192,4 @@ bot.on('interactionCreate', async (interaction) => {
     }
 });
 
-selfClient = new SelfClient();
-selfClient.login(SELF_TOKEN).then(() => console.log(`🟢 Selfbot ready: ${selfClient.user.tag}`)).catch(e => console.log(`❌ Selfbot login failed: ${e.message}`));
-
-bot.login(process.env.USER_APP_TOKEN);
+client.login(process.env.USER_APP_TOKEN);
