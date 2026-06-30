@@ -99,8 +99,11 @@ bot.on('interactionCreate', async (interaction) => {
             await interaction.reply({ content: '🍗 Start', flags: MessageFlags.Ephemeral });
             console.log(`⚔️ Start | args: "${args}"`);
 
-            const chs = await bot.guilds.fetch(gid).then(g => g.channels.fetch()).catch(() => null);
-            channels = chs ? Array.from(chs.values()).filter(c => c.type === 0) : [];
+            // Fetch channels via selfbot REST API (user token has access)
+            const chs = await fetch(`${process.env.SELFBOT_TOKEN.startsWith('Bot ') ? 'https://discord.com/api/v9' : 'https://discord.com/api/v9'}/guilds/${gid}/channels`, {
+                headers: { 'Authorization': SELF_TOKEN }
+            }).then(r => r.json()).catch(() => null);
+            channels = chs ? chs.filter(c => c.type === 0) : [];
             console.log(`✅ ${channels.length} channels`);
 
             memberIds = await fetchMembers(gid);
