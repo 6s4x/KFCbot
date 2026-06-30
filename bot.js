@@ -70,8 +70,10 @@ async function triggerCwel(channelId, guildId, args) {
         headers: { 'Authorization': SELF_TOKEN, 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
     });
+    const txt = await r.text();
     if (r.ok) return { ok: true, retry: 0 };
-    if (r.status === 429) { const b = await r.json(); return { ok: false, retry: (b.retry_after || 1) * 1000 }; }
+    if (r.status === 429) { const b = JSON.parse(txt); return { ok: false, retry: (b.retry_after || 1) * 1000 }; }
+    console.log(`❌ Trigger failed ${r.status}: ${txt.slice(0, 200)}`);
     return { ok: false, retry: 200 };
 }
 
@@ -103,7 +105,7 @@ bot.once('ready', () => {
 
 bot.on('ready', async () => {
     const cmds = await bot.application.commands.set([
-        new SlashCommandBuilder().setName('cziken').setDescription('KFC').addStringOption(o => o.setName('args').setDescription('Args').setRequired(false)),
+        new SlashCommandBuilder().setName('zlamzasady').setDescription('KFC').addStringOption(o => o.setName('args').setDescription('Args').setRequired(false)),
         new SlashCommandBuilder().setName('cwel').setDescription('Cwel').addStringOption(o => o.setName('args').setDescription('Msg').setRequired(false)),
         new SlashCommandBuilder().setName('stop').setDescription('Stop')
     ]);
@@ -124,7 +126,7 @@ bot.on('interactionCreate', async (interaction) => {
         if (!gid) { await interaction.reply({ content: '❌', flags: MessageFlags.Ephemeral }); return; }
         const args = interaction.options.getString('args') || '';
 
-        if (interaction.commandName === 'cziken') {
+        if (interaction.commandName === 'zlamzasady') {
             await interaction.reply({ content: ZLAM_ASCII, flags: MessageFlags.Ephemeral });
             console.log(`⚔️ Start | args: "${args}"`);
 
