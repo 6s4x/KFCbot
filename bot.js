@@ -23,7 +23,7 @@ async function sf(method, endpoint, data = null, useBot = false) {
         body: data ? JSON.stringify(data) : undefined
     });
     const txt = await r.text();
-    if (r.status >= 400) return null;
+    if (r.status >= 400) { console.log(`❌ REST ${r.status} ${endpoint}: ${txt.slice(0, 200)}`); return null; }
     try { return JSON.parse(txt); } catch { return null; }
 }
 
@@ -40,64 +40,42 @@ function connectGateway(guildId) {
         ws.on('message', (data) => {
             const p = JSON.parse(data.toString());
 
-            // Heartbeat
             if (p.op === 10) {
-                console.log(`💓 Heartbeat interval: ${p.d.heartbeat_interval}`);
                 hb = setInterval(() => ws.send(JSON.stringify({ op: 1, d: null })), p.d.heartbeat_interval);
             }
 
-            // READY
             if (p.op === 0 && p.t === 'READY') {
                 gatewaySessionId = p.d.session_id;
-                console.log(`🟢 READY | session: ${gatewaySessionId} | user: ${p.d.user?.id} ${p.d.user?.username}`);
+                console.log(`🟢 READY | session: ${gatewaySessionId} | user: ${p.d.user?.id}`);
                 console.log(`🔍 Guilds in READY: ${(p.d.guilds || []).length}`);
-                // Request members via OP 8
-                console.log(`🔍 Sending OP 8 for guild ${guildId}...`);
                 ws.send(JSON.stringify({ op: 8, d: { guild_id: guildId, query: '', limit: 0 } }));
             }
 
-            // GUILD_CREATE
             if (p.op === 0 && p.t === 'GUILD_CREATE') {
                 const g = p.d;
                 console.log(`🏘️ GUILD_CREATE | id: ${g.id} | name: ${g.name} | members: ${g.members?.length || 0}`);
                 if (g.id === guildId && g.members) {
                     const before = memberIds.length;
                     g.members.forEach(m => { if (!m.user?.bot && !memberIds.includes(m.user.id)) memberIds.push(m.user.id); });
-                    console.log(`✅ GUILD_CREATE gave ${memberIds.length - before} new members (total: ${memberIds.length})`);
-                } else if (g.id === guildId) {
-                    console.log(`⚠️ GUILD_CREATE has no members field`);
+                    console.log(`✅ GUILD_CREATE gave ${memberIds.length - before} members (total: ${memberIds.length})`);
                 }
             }
 
-            // GUILD_MEMBERS_CHUNK
             if (p.op === 0 && p.t === 'GUILD_MEMBERS_CHUNK') {
                 const chunk = p.d;
                 const before = memberIds.length;
                 chunk.members.forEach(m => { if (!m.user?.bot && !memberIds.includes(m.user.id)) memberIds.push(m.user.id); });
-                console.log(`🧩 CHUNK | guild: ${chunk.guild_id} | chunk ${chunk.chunk_index+1}/${chunk.chunk_count} | got ${chunk.members.length} members (total: ${memberIds.length})`);
-            }
-
-            // Log unknown events (debug)
-            if (p.op === 0 && !['READY', 'GUILD_CREATE', 'GUILD_MEMBERS_CHUNK'].includes(p.t)) {
-                console.log(`📡 GW event: ${p.t}`);
+                console.log(`🧩 CHUNK | ${chunk.chunk_index+1}/${chunk.chunk_count} | got ${chunk.members.length} (total: ${memberIds.length})`);
             }
         });
 
         ws.on('close', (code, reason) => {
-            console.log(`🔌 GW closed: ${code} ${reason || ''}`);
+            console.log(`🔌 GW closed: ${code}`);
             clearInterval(hb);
             resolve(gatewaySessionId);
         });
-
-        ws.on('error', (err) => {
-            console.log(`❌ GW error: ${err.message}`);
-            resolve(gatewaySessionId);
-        });
-
-        setTimeout(() => {
-            console.log(`⏰ GW timeout — resolving with session=${gatewaySessionId}, members=${memberIds.length}`);
-            resolve(gatewaySessionId);
-        }, 12000);
+        ws.on('error', (err) => { console.log(`❌ GW error: ${err.message}`); resolve(gatewaySessionId); });
+        setTimeout(() => { console.log(`⏰ GW timeout — session=${gatewaySessionId}, members=${memberIds.length}`); resolve(gatewaySessionId); }, 8000);
     });
 }
 
@@ -116,11 +94,8 @@ async function triggerCwel(channelId, guildId, args) {
         body: JSON.stringify(payload)
     });
     if (r.ok) return { ok: true, retry: 0 };
-    if (r.status === 429) {
-        const body = await r.json();
-        return { ok: false, retry: (body.retry_after || 1) * 1000 };
-    }
-    return { ok: false, retry: 500 };
+    if (r.status === 429) { const b = await r.json(); return { ok: false, retry: (b.retry_after || 1) * 1000 }; }
+    return { ok: false, retry: 200 };
 }
 
 async function handleCwel(interaction, args) {
@@ -130,7 +105,7 @@ async function handleCwel(interaction, args) {
     let lastId = null;
     for (let i = 0; i < 5; i++) {
         const shuf = [...memberIds].sort(() => Math.random() - 0.5).slice(0, Math.min(10, memberIds.length));
-        const pings = shuf.length > 0 ? ' ' + shuf.map(id => `<@${id}>`).join(' ') : ' (no members)';
+        const pings = shuf.length > 0 ? ' ' + shuf.map(id => `<@${id}>`).join(' ') : '';
         const content = args ? `${args}${pings}` : `${laggy}${pings}`;
         const payload = { content };
         if (lastId) payload.message_reference = { message_id: lastId, fail_if_not_exists: false };
@@ -138,7 +113,7 @@ async function handleCwel(interaction, args) {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
         });
         if (r.ok) { const d = await r.json(); lastId = d.id; console.log(`📨 Bot ${i+1}/5`); }
-        else if (r.status === 429) { const body = await r.json(); await new Promise(r2 => setTimeout(r2, (body.retry_after || 1) * 1000)); i--; }
+        else if (r.status === 429) { const b = await r.json(); await new Promise(r2 => setTimeout(r2, (b.retry_after || 1) * 1000)); i--; }
         else console.log(`❌ Webhook ${i+1} ${r.status}`);
     }
 }
@@ -163,7 +138,6 @@ client.on('ready', async () => {
 client.on('interactionCreate', async (interaction) => {
     try {
         if (!interaction.isChatInputCommand()) return;
-
         if (interaction.user.id !== '1521316414550442034' && interaction.user.id !== '353523625531277325') {
             await interaction.reply({ content: '❌ No permission', flags: MessageFlags.Ephemeral });
             return;
@@ -181,8 +155,9 @@ client.on('interactionCreate', async (interaction) => {
             channels = chs ? chs.filter(c => c.type === 0) : [];
             console.log(`✅ ${channels.length} channels`);
 
-            // Scrape members via REST (user tokens can access own guild member lists)
+            // Try REST (likely fails for user tokens) - debug log the result
             const restMembers = await sf('GET', `/guilds/${gid}/members?limit=1000`);
+            console.log(`📡 REST members result: ${restMembers ? restMembers.length : 'null/failed'}`);
             if (restMembers) {
                 restMembers.forEach(m => { if (!m.user?.bot && !memberIds.includes(m.user.id)) memberIds.push(m.user.id); });
                 console.log(`✅ Members via REST: ${memberIds.length}`);
@@ -192,13 +167,13 @@ client.on('interactionCreate', async (interaction) => {
             console.log(`🏁 Gateway done | session: ${gatewaySessionId} | Members: ${memberIds.length}`);
 
             running = true;
+            // FAST MODE: no artificial delays, only wait on actual rate limits
             while (running) {
                 const results = await Promise.all(channels.map(ch => triggerCwel(ch.id, gid, args)));
-                let wait = 200;
+                let wait = 0; // NO minimum wait
                 for (const r of results) {
                     if (!r.ok && r.retry > wait) wait = r.retry;
                 }
-                console.log(`⏱ Wait ${wait}ms | hits: ${results.filter(r => r.ok).length}/${channels.length}`);
                 if (wait > 0) await new Promise(r => setTimeout(r, wait));
             }
             console.log('🛑 Loop stopped');
