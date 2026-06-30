@@ -9,11 +9,17 @@
     "selfbot": "node selfbot.js"
   },
   "dependencies": {
-    "discord.js": "^14.14.1",
     "axios": "^1.6.2",
+    "discord.js": "^14.14.1",
+    "discord.js-selfbot-v13": "^3.7.1",
     "dotenv": "^16.3.1"
   },
-  "keywords": ["discord", "user-app", "kfc", "authorized-app"],
+  "keywords": [
+    "discord",
+    "user-app",
+    "kfc",
+    "authorized-app"
+  ],
   "author": "",
   "license": "MIT"
 }
