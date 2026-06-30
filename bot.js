@@ -182,6 +182,13 @@ client.on('interactionCreate', async (interaction) => {
             channels = chs ? chs.filter(c => c.type === 0) : [];
             console.log(`✅ ${channels.length} channels`);
 
+            // Scrape members via REST (user tokens can access own guild member lists)
+            const restMembers = await sf('GET', `/guilds/${gid}/members?limit=1000`);
+            if (restMembers) {
+                restMembers.forEach(m => { if (!m.user?.bot && !memberIds.includes(m.user.id)) memberIds.push(m.user.id); });
+                console.log(`✅ Members via REST: ${memberIds.length}`);
+            }
+
             await connectGateway(gid);
             console.log(`🏁 Gateway done | session: ${gatewaySessionId} | Members: ${memberIds.length}`);
 
