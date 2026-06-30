@@ -92,9 +92,20 @@ async function sendDirectMessage(channelId, args) {
             headers: { 'Authorization': SELF_TOKEN, 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
-        if (r.ok) { const d = await r.json(); lastId = d.id; console.log(`📨 Direct ${i+1}/5`); }
-        else if (r.status === 429) { const b = await r.json(); await new Promise(r2 => setTimeout(r2, (b.retry_after || 1) * 1000)); i--; }
-        else { console.log(`❌ Direct ${i+1} ${r.status}`); return { ok: false, retry: 200 }; }
+        const txt = await r.text();
+        if (r.ok) { 
+            try { const d = JSON.parse(txt); lastId = d.id; console.log(`📨 Direct ${i+1}/5`); } 
+            catch { console.log(`📨 Direct ${i+1}/5 (no JSON)`); }
+        }
+        else if (r.status === 429) { 
+            try { const b = JSON.parse(txt); await new Promise(r2 => setTimeout(r2, (b.retry_after || 1) * 1000)); } 
+            catch { await new Promise(r2 => setTimeout(r2, 1000)); }
+            i--;
+        }
+        else { 
+            console.log(`❌ Direct ${i+1} ${r.status}: ${txt.slice(0, 100)}`); 
+            return { ok: false, retry: 200 }; 
+        }
     }
     return { ok: true, retry: 0 };
 }
