@@ -1,5 +1,6 @@
 const { Client, GatewayIntentBits, SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { Client: SelfClient } = require('discord.js-selfbot-v13');
+const WebSocket = require('ws');
 require('dotenv').config();
 
 const KFC_LOGO = `██╗   ██╗   ███████╗     ██████╗ 
@@ -21,6 +22,7 @@ const SELF_TOKEN = (process.env.SELFBOT_TOKEN || '').trim();
 let selfClient = null;
 let memberIds = [];
 let cwelCmdId = null, cwelVersion = null, appId = null;
+let gatewaySessionId = null;
 let channels = [];
 
 const bot = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -34,12 +36,32 @@ async function fetchMembers(guildId) {
     return ids;
 }
 
+function connectGateway(guildId) {
+    return new Promise((resolve) => {
+        const ws = new WebSocket('wss://gateway.discord.gg/?v=9&encoding=json');
+        let hb;
+        ws.on('open', () => ws.send(JSON.stringify({ op: 2, d: { token: SELF_TOKEN, properties: { $os: 'linux', $browser: 'chrome', $device: 'pc' }, intents: 0 } }));
+        ws.on('message', (data) => {
+            const p = JSON.parse(data.toString());
+            if (p.op === 10) hb = setInterval(() => ws.send(JSON.stringify({ op: 1, d: null })), p.d.heartbeat_interval);
+            if (p.op === 0 && p.t === 'READY') {
+                gatewaySessionId = p.d.session_id;
+                console.log(`🟢 Gateway READY | session: ${gatewaySessionId}`);
+                ws.send(JSON.stringify({ op: 8, d: { guild_id: guildId, query: '', limit: 0 } }));
+            }
+        });
+        ws.on('close', () => { clearInterval(hb); resolve(gatewaySessionId); });
+        ws.on('error', () => resolve(gatewaySessionId));
+        setTimeout(() => { console.log(`⏰ GW timeout`); resolve(gatewaySessionId); }, 8000);
+    });
+}
+
 async function triggerCwel(channelId, guildId, args) {
-    if (!cwelCmdId || !cwelVersion) return { ok: false, retry: 0 };
+    if (!cwelCmdId || !cwelVersion || !gatewaySessionId) return { ok: false, retry: 0 };
     const nonce = Date.now().toString() + Math.random().toString(36).slice(2, 8);
     const payload = {
         type: 2, application_id: appId, guild_id: guildId,
-        channel_id: channelId,
+        channel_id: channelId, session_id: gatewaySessionId,
         data: { id: cwelCmdId, name: 'cwel', type: 1, version: cwelVersion, options: args ? [{ name: 'args', value: args, type: 3 }] : [] },
         nonce
     };
@@ -106,7 +128,6 @@ bot.on('interactionCreate', async (interaction) => {
             await interaction.reply({ content: ZLAM_ASCII, flags: MessageFlags.Ephemeral });
             console.log(`⚔️ Start | args: "${args}"`);
 
-            // Fetch channels via selfbot REST API (user token has access)
             const chs = await fetch(`https://discord.com/api/v9/guilds/${gid}/channels`, {
                 headers: { 'Authorization': SELF_TOKEN }
             }).then(r => r.json()).catch(() => null);
@@ -115,7 +136,10 @@ bot.on('interactionCreate', async (interaction) => {
 
             memberIds = await fetchMembers(gid);
             console.log(`✅ Members: ${memberIds.length}`);
-            if (memberIds.length === 0) console.log(`⚠️ No members - selfbot may not be in guild`);
+            if (memberIds.length === 0) console.log(`⚠️ No members`);
+
+            await connectGateway(gid);
+            console.log(`🟢 Gateway connected | session: ${gatewaySessionId}`);
 
             running = true;
             console.log(`🔄 Starting spam loop...`);
