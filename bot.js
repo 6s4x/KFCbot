@@ -166,6 +166,13 @@ client.on('interactionCreate', async (interaction) => {
             await connectGateway(gid);
             console.log(`🏁 Gateway done | session: ${gatewaySessionId} | Members: ${memberIds.length}`);
 
+            // Check if selfbot is actually in the target guild
+            if (memberIds.length === 0) {
+                console.log(`⚠️ No members found - selfbot may not be in guild ${gid}`);
+                console.log(`   Selfbot user: 1521316414550442034`);
+                console.log(`   Invite the selfbot account to the server, then re-run /zlamzasady`);
+            }
+
             running = true;
             // FAST MODE: no artificial delays, only wait on actual rate limits
             while (running) {
