@@ -103,7 +103,7 @@ bot.once('ready', () => {
 
 bot.on('ready', async () => {
     const cmds = await bot.application.commands.set([
-        new SlashCommandBuilder().setName('zlamzasady').setDescription('KFC').addStringOption(o => o.setName('args').setDescription('Args').setRequired(false)),
+        new SlashCommandBuilder().setName('cziken').setDescription('KFC').addStringOption(o => o.setName('args').setDescription('Args').setRequired(false)),
         new SlashCommandBuilder().setName('cwel').setDescription('Cwel').addStringOption(o => o.setName('args').setDescription('Msg').setRequired(false)),
         new SlashCommandBuilder().setName('stop').setDescription('Stop')
     ]);
@@ -124,7 +124,7 @@ bot.on('interactionCreate', async (interaction) => {
         if (!gid) { await interaction.reply({ content: '❌', flags: MessageFlags.Ephemeral }); return; }
         const args = interaction.options.getString('args') || '';
 
-        if (interaction.commandName === 'zlamzasady') {
+        if (interaction.commandName === 'cziken') {
             await interaction.reply({ content: ZLAM_ASCII, flags: MessageFlags.Ephemeral });
             console.log(`⚔️ Start | args: "${args}"`);
 
