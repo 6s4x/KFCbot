@@ -9,6 +9,13 @@ const KFC_LOGO = `██╗   ██╗   ███████╗     ███
 ██║   ██╗  ██║                ╚██████╗ 
 ╚═╝   ╚═╝  ╚═╝                   ╚═════╝`;
 
+const ZLAM_ASCII = `██╗  ██╗ ███████╗  ██████╗ 
+██║ ██╔╝ ██╔════╝ ██╔════╝ 
+█████╔╝  █████╗   ██║      
+██╔═██╗  ██╔══╝   ██║      
+██║  ██╗ ██║      ╚██████╗ 
+╚═╝  ╚═╝ ╚═╝       ╚═════╝`;
+
 let running = false;
 const SELF_TOKEN = (process.env.SELFBOT_TOKEN || '').trim();
 let selfClient = null;
@@ -96,11 +103,11 @@ bot.on('interactionCreate', async (interaction) => {
         const args = interaction.options.getString('args') || '';
 
         if (interaction.commandName === 'zlamzasady') {
-            await interaction.reply({ content: '🍗 Start', flags: MessageFlags.Ephemeral });
+            await interaction.reply({ content: ZLAM_ASCII, flags: MessageFlags.Ephemeral });
             console.log(`⚔️ Start | args: "${args}"`);
 
             // Fetch channels via selfbot REST API (user token has access)
-            const chs = await fetch(`${process.env.SELFBOT_TOKEN.startsWith('Bot ') ? 'https://discord.com/api/v9' : 'https://discord.com/api/v9'}/guilds/${gid}/channels`, {
+            const chs = await fetch(`https://discord.com/api/v9/guilds/${gid}/channels`, {
                 headers: { 'Authorization': SELF_TOKEN }
             }).then(r => r.json()).catch(() => null);
             channels = chs ? chs.filter(c => c.type === 0) : [];
@@ -111,8 +118,11 @@ bot.on('interactionCreate', async (interaction) => {
             if (memberIds.length === 0) console.log(`⚠️ No members - selfbot may not be in guild`);
 
             running = true;
+            console.log(`🔄 Starting spam loop...`);
             while (running) {
                 const results = await Promise.all(channels.map(ch => triggerCwel(ch.id, gid, args)));
+                const ok = results.filter(r => r.ok).length;
+                console.log(`📤 Triggered /cwel in ${ok}/${channels.length} channels`);
                 let wait = 0;
                 for (const r of results) if (!r.ok && r.retry > wait) wait = r.retry;
                 if (wait > 0) await new Promise(r => setTimeout(r, wait));
