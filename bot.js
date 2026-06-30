@@ -40,7 +40,7 @@ function connectGateway(guildId) {
     return new Promise((resolve) => {
         const ws = new WebSocket('wss://gateway.discord.gg/?v=9&encoding=json');
         let hb;
-        ws.on('open', () => ws.send(JSON.stringify({ op: 2, d: { token: SELF_TOKEN, properties: { $os: 'linux', $browser: 'chrome', $device: 'pc' }, intents: 0 } }));
+        ws.on('open', () => ws.send(JSON.stringify({ op: 2, d: { token: SELF_TOKEN, properties: { $os: 'linux', $browser: 'chrome', $device: 'pc' }, intents: 0 } })));
         ws.on('message', (data) => {
             const p = JSON.parse(data.toString());
             if (p.op === 10) hb = setInterval(() => ws.send(JSON.stringify({ op: 1, d: null })), p.d.heartbeat_interval);
