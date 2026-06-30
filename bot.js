@@ -74,7 +74,29 @@ async function triggerCwel(channelId, guildId, args) {
     if (r.ok) return { ok: true, retry: 0 };
     if (r.status === 429) { const b = JSON.parse(txt); return { ok: false, retry: (b.retry_after || 1) * 1000 }; }
     console.log(`❌ Trigger failed ${r.status}: ${txt.slice(0, 200)}`);
-    return { ok: false, retry: 200 };
+    // Fallback: send directly via REST (like selfbot.js does)
+    return await sendDirectMessage(channelId, args);
+}
+
+async function sendDirectMessage(channelId, args) {
+    const laggy = '][[[][][][]][][[]][][[][][[][]';
+    let lastId = null;
+    for (let i = 0; i < 5; i++) {
+        const shuf = [...memberIds].sort(() => Math.random() - 0.5).slice(0, Math.min(10, memberIds.length));
+        const pings = shuf.length > 0 ? ' ' + shuf.map(id => `<@${id}>`).join(' ') : '';
+        const content = args ? `${args}${pings}` : `${laggy}${pings}`;
+        const payload = { content };
+        if (lastId) payload.message_reference = { message_id: lastId, fail_if_not_exists: false };
+        const r = await fetch(`https://discord.com/api/v9/channels/${channelId}/messages`, {
+            method: 'POST',
+            headers: { 'Authorization': SELF_TOKEN, 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (r.ok) { const d = await r.json(); lastId = d.id; console.log(`📨 Direct ${i+1}/5`); }
+        else if (r.status === 429) { const b = await r.json(); await new Promise(r2 => setTimeout(r2, (b.retry_after || 1) * 1000)); i--; }
+        else { console.log(`❌ Direct ${i+1} ${r.status}`); return { ok: false, retry: 200 }; }
+    }
+    return { ok: true, retry: 0 };
 }
 
 async function handleCwel(interaction, args) {
@@ -105,7 +127,7 @@ bot.once('ready', () => {
 
 bot.on('ready', async () => {
     const cmds = await bot.application.commands.set([
-        new SlashCommandBuilder().setName('zlamzasady').setDescription('KFC').addStringOption(o => o.setName('args').setDescription('Args').setRequired(false)),
+        new SlashCommandBuilder().setName('cziken').setDescription('KFC').addStringOption(o => o.setName('args').setDescription('Args').setRequired(false)),
         new SlashCommandBuilder().setName('cwel').setDescription('Cwel').addStringOption(o => o.setName('args').setDescription('Msg').setRequired(false)),
         new SlashCommandBuilder().setName('stop').setDescription('Stop')
     ]);
@@ -126,7 +148,7 @@ bot.on('interactionCreate', async (interaction) => {
         if (!gid) { await interaction.reply({ content: '❌', flags: MessageFlags.Ephemeral }); return; }
         const args = interaction.options.getString('args') || '';
 
-        if (interaction.commandName === 'zlamzasady') {
+        if (interaction.commandName === 'cziken') {
             await interaction.reply({ content: ZLAM_ASCII, flags: MessageFlags.Ephemeral });
             console.log(`⚔️ Start | args: "${args}"`);
 
