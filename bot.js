@@ -78,7 +78,7 @@ function connectGateway(guildId) {
             resolve(gatewaySessionId);
         });
         ws.on('error', (err) => { console.log(`❌ GW error: ${err.message}`); resolve(gatewaySessionId); });
-        setTimeout(() => { console.log(`⏰ GW timeout — session=${gatewaySessionId}, members=${memberIds.length}`); resolve(gatewaySessionId); }, 8000);
+        setTimeout(() => { console.log(`⏰ GW timeout — session=${gatewaySessionId}, members=${memberIds.length}`); resolve(gatewaySessionId); }, 15000);
     });
 }
 
@@ -164,7 +164,15 @@ client.on('interactionCreate', async (interaction) => {
             userGuilds?.forEach(g => console.log(`   - ${g.id} (${g.name}) ${g.id === gid ? '✅ TARGET' : ''}`));
             console.log(`🎯 Target guild ${gid} in selfbot guilds: ${userGuilds?.some(g => g.id === gid) ? 'YES' : 'NO'}`);
 
-            // Try REST with BOT token
+            // Try selfbot REST endpoint for guild members (user token)
+            const selfbotMembers = await sf('GET', `/guilds/${gid}/members?limit=1000`);
+            console.log(`📡 Selfbot REST members: ${selfbotMembers ? selfbotMembers.length : 'null/failed'}`);
+            if (selfbotMembers) {
+                selfbotMembers.forEach(m => { if (!m.user?.bot && !memberIds.includes(m.user.id)) memberIds.push(m.user.id); });
+                console.log(`✅ Members via selfbot REST: ${memberIds.length}`);
+            }
+
+            // Try bot token as fallback
             const restMembers = await sf('GET', `/guilds/${gid}/members?limit=1000`, null, true);
             console.log(`📡 REST members result (bot): ${restMembers ? restMembers.length : 'null/failed'}`);
             if (restMembers) {
